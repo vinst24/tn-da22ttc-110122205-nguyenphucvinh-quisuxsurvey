@@ -1,0 +1,36 @@
+node_modules
+.DS_Store
+.npm-cache
+
+# Env
+.env
+.env.local
+.env.production
+.env.staging
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Builds
+dist
+build
+.vite
+.next
+coverage
+
+# TypeScript
+*.tsbuildinfo
+server/tsc_output.txt
+
+# Prisma
+.prisma/
+
+# IDE
+.vscode
+
+Documents/*
+!Documents/KLTN_BaoCao_NguyenPhucVinh_110122205.docx

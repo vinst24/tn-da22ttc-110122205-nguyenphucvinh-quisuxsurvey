@@ -1,0 +1,309 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// =====================================================
+// ENUMS
+// =====================================================
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum Specialty {
+  INFORMATION_TECHNOLOGY
+  BUSINESS_MANAGEMENT
+  ENGINEERING
+  HEALTHCARE
+  EDUCATION
+  MARKETING_COMMUNICATION
+  UX_DESIGN
+  FINANCE_ACCOUNTING
+  LAW
+  ARCHITECTURE
+  MEDIA_JOURNALISM
+  OTHER
+}
+
+// =====================================================
+// USERS
+// Bảng tài khoản hệ thống
+// =====================================================
+
+model User {
+  id Int @id @default(autoincrement())
+
+  email        String @unique
+  passwordHash String
+
+  fullname String?
+
+  role UserRole @default(USER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 1 account map tới 1 participant
+  participant Participant?
+
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+// =====================================================
+// REFRESH TOKENS
+// Quản lý phiên đăng nhập
+// - Khi login: tạo refresh token mới (expiresAt = now + 30 ngày)
+// - Khi access token hết hạn: dùng refresh token để lấy token mới (rotation)
+//   → token cũ được replacedByTokenId trỏ đến token mới, revokedAt được set
+// - Nếu dùng token đã revoked → phát hiện theft → logout toàn bộ
+// =====================================================
+
+model RefreshToken {
+  id                Int       @id @default(autoincrement())
+  tokenId           String    @unique
+  userId            Int
+  createdAt         DateTime  @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// =====================================================
+// PARTICIPANTS
+// Thực thể người tham gia khảo sát
+// Có thể là guest hoặc user có tài khoản
+// =====================================================
+
+model Participant {
+  id Int @id @default(autoincrement())
+
+  // null nếu là guest
+  userId Int? @unique
+
+  participantCode String @unique
+
+  nickname String?
+
+  isGuest Boolean @default(true)
+
+  specialty Specialty?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  responses Response[]
+
+  @@map("participants")
+}
+
+// =====================================================
+// SURVEYS
+// Một khảo sát QUIS lớn
+// =====================================================
+
+model Survey {
+  id Int @id @default(autoincrement())
+
+  title       String
+  description String?
+
+  // URL đẹp
+  slug String @unique
+
+  isActive  Boolean   @default(true)
+  isPublic  Boolean   @default(false)
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  surveyCategories SurveyCategory[]
+
+  surveyTokens SurveyToken[]
+
+  responses Response[]
+
+  @@map("surveys")
+}
+
+// =====================================================
+// SURVEY TOKENS
+// Mã truy cập khảo sát
+// 1 survey có thể có nhiều survey token (0..n)
+// 1 survey token chỉ thuộc về 1 survey
+// survey token là duy nhất toàn hệ thống (code @unique)
+// Không gắn với participant cụ thể — nhiều người dùng chung 1 mã
+// =====================================================
+
+model SurveyToken {
+  id Int @id @default(autoincrement())
+
+  surveyId Int
+
+  code String @unique
+
+  maxUsage   Int?
+  usageCount Int  @default(0)
+
+  validFrom DateTime?
+  validTo   DateTime?
+
+  createdAt DateTime @default(now())
+
+  survey Survey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@map("survey_tokens")
+}
+
+// =====================================================
+// CATEGORIES
+// Nhóm tiêu chí QUIS
+// =====================================================
+
+model Category {
+  id Int @id @default(autoincrement())
+
+  name String
+
+  description String?
+
+  createdAt DateTime @default(now())
+
+  surveyCategories SurveyCategory[]
+
+  questions Question[]
+
+  @@map("categories")
+}
+
+// =====================================================
+// SURVEY CATEGORIES
+// Bảng nối Survey ↔ Category (shared library)
+// Một survey "chọn" những category nào để dùng,
+// và thứ tự hiển thị trong survey đó
+// =====================================================
+
+model SurveyCategory {
+  surveyId   Int
+  categoryId Int
+
+  // Thứ tự category trong phạm vi một survey
+  order Int?
+
+  createdAt DateTime @default(now())
+
+  survey   Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@id([surveyId, categoryId])
+  @@map("survey_categories")
+}
+
+// =====================================================
+// QUESTIONS
+// Các câu hỏi thuộc category
+// globalOrder: số thứ tự câu khi export dữ liệu (1-27)
+// =====================================================
+
+model Question {
+  id Int @id @default(autoincrement())
+
+  categoryId Int
+
+  content String
+
+  order Int
+
+  // Thứ tự khi export dữ liệu (1-27)
+  globalOrder Int @unique
+
+  minScale Int @default(1)
+  maxScale Int @default(9)
+
+  isRequired Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  responseDetails ResponseDetail[]
+
+  @@unique([categoryId, order])
+  @@map("questions")
+}
+
+// =====================================================
+// RESPONSES
+// Một lần participant submit khảo sát
+// =====================================================
+
+model Response {
+  id Int @id @default(autoincrement())
+
+  surveyId      Int
+  participantId Int
+
+  // feedback tổng thể khảo sát
+  overallFeedback String?
+
+  // Trạng thái hoàn thành khảo sát
+  isComplete Boolean @default(false)
+
+  // Tiến độ hiện tại (0-100)
+  completionPercent Int @default(0)
+
+  // Lần autosave gần nhất
+  lastSavedAt DateTime?
+
+  // Thời điểm submit chính thức (null nếu chưa submit)
+  submittedAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime @updatedAt
+
+  survey Survey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  responseDetails ResponseDetail[]
+
+  @@index([surveyId, participantId, isComplete])
+  @@map("responses")
+}
+
+// =====================================================
+// RESPONSE DETAILS
+// Điểm trả lời cho từng câu hỏi
+// =====================================================
+
+model ResponseDetail {
+  responseId Int
+  questionId Int
+
+  // semantic differential scale
+  score Int
+
+  answeredAt DateTime @default(now())
+
+  response Response @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([responseId, questionId])
+  @@map("response_details")
+}
